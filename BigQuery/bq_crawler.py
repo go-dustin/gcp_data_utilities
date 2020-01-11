@@ -41,9 +41,11 @@ def get_table_details(dataset_tablename):
     table_doc['num_rows'] = table.num_rows
     table_doc['size_mb'] = int(table.num_bytes / 1000000)
     try:
-        table_doc['avg_size_per_row'] = int(table.num_bytes / 1000000) / table.num_rows
+        table_doc['avg_byte_per_row'] = round(table.num_bytes / table.num_rows, 2)
+        table_doc['avg_kbyte_per_row'] = round(int(table.num_bytes / 1000) / table.num_rows, 2)
     except:
-        table_doc['avg_size_per_row'] = None
+        table_doc['avg_byte_per_row'] = None
+        table_doc['avg_kbyte_per_row'] = None
     table_doc['clustering_fields'] = table.clustering_fields
     table_doc['created'] = table.created.isoformat()
     table_doc['description'] = table.description
