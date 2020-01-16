@@ -16,15 +16,15 @@ parser.add_argument('--json_path',       type=str, help='Output dir for JSON')
 parser.add_argument('--output_bq_table', type=str, help='Table to write to in BigQuery. Ex: mydataset.mytable')
 parser.add_argument('--count_incr',      type=int, help='Log out every x tables. Choose an integer to use as a divisor', default=10)
 args = parser.parse_args()
-project = args.project
-csv_path = args.csv_path
-json_path = args.json_path
+project         = args.project
+csv_path        = args.csv_path
+json_path       = args.json_path
 output_bq_table = args.output_bq_table
-count_incr = args.count_incr
+count_incr      = args.count_incr
 
 
 if output_bq_table != None:
-    dataset_n, table_n = output_bq_table.split('.')
+    des_proj, dataset_n, table_n = output_bq_table.split('.')
 
 if csv_path == None and output_bq_table == None and json_path == None:
     sys.exit('No output target, set --csv_path or --output_bq_table')
@@ -33,7 +33,7 @@ if csv_path == None and output_bq_table == None and json_path == None:
 # create bigquery connection obj
 client = bigquery.Client(project=project)
 
-
+# BigQuery output table schema
 # BigQuery output table schema
 schema = [bigquery.SchemaField("log_date",              "DATETIME", mode="NULLABLE", description='Date & time of the crawl'),
           bigquery.SchemaField("project",               "STRING",   mode="NULLABLE"), 
@@ -131,55 +131,52 @@ def get_table_details(dataset_tablename):
     column_list.sort()
     
     table_doc = OrderedDict()
-    table_doc['log_date'] = dt.datetime.now()
-    table_doc['project'] = table.project
-    table_doc['dataset'] = dataset
-    table_doc['table_path'] = table.path
-    table_doc['full_table_id'] = table.full_table_id
-    table_doc['table_name'] = dataset_tablename
-    table_doc['friendly_name'] = table.friendly_name
-    table_doc['table_type'] = table.table_type
-    table_doc['created'] = table.created
-    table_doc['modified'] = table.modified
-    table_doc['expires'] = table.expires
-    table_doc['location'] = table.location
-    table_doc['description'] = table.description
-    table_doc['labels'] = str(table.labels) # conver this to tuples in an array?
-    table_doc['column_count'] = len(column_list)
-    table_doc['column_names'] = column_list
+    table_doc['log_date']          = dt.datetime.now()
+    table_doc['project']           = table.project
+    table_doc['dataset']           = dataset
+    table_doc['table_path']        = table.path
+    table_doc['full_table_id']     = table.full_table_id
+    table_doc['table_name']        = dataset_tablename
+    table_doc['friendly_name']     = table.friendly_name
+    table_doc['table_type']        = table.table_type
+    table_doc['created']           = table.created
+    table_doc['modified']          = table.modified
+    table_doc['expires']           = table.expires
+    table_doc['location']          = table.location
+    table_doc['description']       = table.description
+    table_doc['labels']            = str(table.labels) # conver this to tuples in an array?
+    table_doc['column_count']      = len(column_list)
+    table_doc['column_names']      = column_list
     table_doc['partitioning_type'] = table.partitioning_type
     
     if table.range_partitioning != None:
-        range_part = str(table.range_partitioning)
-        range_part_field, range_part_end, range_part_interval, range_part_start = range_part.replace('RangePartitioning(', '').replace('range_=PartitionRange(','').replace(')','').split(',')
-        table_doc['range_part_field'] = range_part_field.split('=')[1].replace("'","")
-        table_doc['range_part_end'] = int(range_part_end.split('=')[1].replace("'",""))
-        table_doc['range_part_interval'] = int(range_part_interval.split('=')[1].replace("'",""))
-        table_doc['range_part_start'] = int(range_part_start.split('=')[1].replace("'",""))
+        table_doc['range_part_field']    = table.range_partitioning.field
+        table_doc['range_part_end']      = table.range_partitioning.range_.end
+        table_doc['range_part_interval'] = table.range_partitioning.range_.interval
+        table_doc['range_part_start']    = table.range_partitioning.range_.start
     else:
-        table_doc['range_part_field'] = None
-        table_doc['range_part_end'] = None
+        table_doc['range_part_field']    = None
+        table_doc['range_part_end']      = None
         table_doc['range_part_interval'] = None
-        table_doc['range_part_start'] = None
+        table_doc['range_part_start']    = None
     try:
-        time_partition_field, time_partition_type = table.time_partitioning.replace('TimePartitioning(','').replace(')', '').split(',')
-        table_doc['time_partition_field'] = time_partition_field.split('=')[1]
-        table_doc['time_partition_type']  = time_partition_type.split('=')[1]
+        table_doc['time_partition_field'] = table.time_partitioning.field
+        table_doc['time_partition_type']  = table.time_partitioning.type_
     except:
         table_doc['time_partition_field'] = None
         table_doc['time_partition_type']  = None
     if table.clustering_fields != None:
         table_doc['clustering_fields'] = table.clustering_fields
     else:
-        table_doc['clustering_fields'] = []
-    table_doc['size_mb'] = int(table.num_bytes / 1000000)
-
+        table_doc['clustering_fields']    = []
+        
+    table_doc['size_mb']  = int(table.num_bytes / 1000000)
     table_doc['num_rows'] = table.num_rows
     try:
-        table_doc['avg_byte_per_row'] = round(table.num_bytes / table.num_rows, 2)
+        table_doc['avg_byte_per_row']  = round(table.num_bytes / table.num_rows, 2)
         table_doc['avg_kbyte_per_row'] = round(int(table.num_bytes / 1000) / table.num_rows, 2)
     except:
-        table_doc['avg_byte_per_row'] = None
+        table_doc['avg_byte_per_row']  = None
         table_doc['avg_kbyte_per_row'] = None
 
     table_doc['float']     = None
@@ -231,7 +228,7 @@ def create_table(output_bq_table, dataset_n, table_n):
         table_exists = False
     
     if table_exists == False:
-        full_table_name = project + '.' + output_bq_table
+        full_table_name = output_bq_table
         table = bigquery.Table(full_table_name, schema=schema)
         client.create_table(table)
         print("Created table ", output_bq_table)
