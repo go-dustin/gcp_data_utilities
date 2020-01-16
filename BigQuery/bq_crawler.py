@@ -63,20 +63,20 @@ schema = [bigquery.SchemaField("log_date",              "DATETIME", mode="NULLAB
           bigquery.SchemaField("num_rows",               "INT64",   mode="NULLABLE"),
           bigquery.SchemaField("avg_byte_per_row",       "NUMERIC", mode="NULLABLE"),
           bigquery.SchemaField("avg_kbyte_per_row",      "NUMERIC", mode="NULLABLE"),
-          bigquery.SchemaField("FLOAT",                  "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("DATETIME",               "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("DATE",                   "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("REPEATED",               "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("RECORD",                 "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("TIMESTAMP",              "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("TIME",                   "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("NUMERIC",                "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("BYTES",                  "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("STRUCT",                 "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("BOOLEAN",                "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("INTEGER",                "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("GEOGRAPHY",              "INT64",   mode="NULLABLE"),
-          bigquery.SchemaField("STRING",                 "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("float",                  "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("datetime",               "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("date",                   "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("repeated",               "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("record",                 "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("timestamp",              "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("time",                   "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("numeric",                "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("bytes",                  "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("struct",                 "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("boolean",                "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("integer",                "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("geography",              "INT64",   mode="NULLABLE"),
+          bigquery.SchemaField("string",                 "INT64",   mode="NULLABLE"),
           ]
 
 
@@ -122,7 +122,8 @@ def get_table_details(dataset_tablename):
     table_schema = table.schema
     for i in table_schema:
         type_list.append(i.field_type)
-    schema_types_count= dict(Counter(type_list))
+    schema_types_count = dict(Counter(type_list))
+    schema_types_count = {key.lower() if type(key) == str else key: value for key, value in schema_types_count.items()}
 
     column_list = list()
     for i in table_schema:
@@ -181,20 +182,20 @@ def get_table_details(dataset_tablename):
         table_doc['avg_byte_per_row'] = None
         table_doc['avg_kbyte_per_row'] = None
 
-    table_doc['FLOAT']     = None
-    table_doc['DATETIME']  = None
-    table_doc['DATE']      = None
-    table_doc['REPEATED']  = None
-    table_doc['RECORD']    = None
-    table_doc['TIMESTAMP'] = None
-    table_doc['TIME']      = None
-    table_doc['NUMERIC']   = None
-    table_doc['BYTES']     = None
-    table_doc['STRUCT']    = None
-    table_doc['BOOLEAN']   = None
-    table_doc['INTEGER']   = None
-    table_doc['GEOGRAPHY'] = None
-    table_doc['STRING']    = None
+    table_doc['float']     = None
+    table_doc['datetime']  = None
+    table_doc['date']      = None
+    table_doc['repeated']  = None
+    table_doc['record']    = None
+    table_doc['timestamp'] = None
+    table_doc['time']      = None
+    table_doc['numeric']   = None
+    table_doc['bytes']     = None
+    table_doc['struct']    = None
+    table_doc['boolean']   = None
+    table_doc['integer']   = None
+    table_doc['geography'] = None
+    table_doc['string']    = None
     
     table_doc.update(schema_types_count)
     
@@ -240,7 +241,9 @@ def write_to_bq(all_table_details):
     """
     Write the table details to the BigQuery output table
     """
+    
     rows = [tuple(row.values()) for row in all_table_details]
+    
     print('num of rows to write',len(rows))
     errors = client.insert_rows(output_bq_table, rows, selected_fields=schema)
     if errors == []:
@@ -263,18 +266,24 @@ def write_to_json(all_table_details):
     
 
 def main():
+    
     print('Starting crawl')
+    
     all_table_details = crawler(project)
     result_count = len(all_table_details)
+    
     print(result_count, ' tables found')
+    
     if csv_path != None:
         write_to_csv(all_table_details)
+        
     if json_path != None:
         write_to_json(all_table_details)
     
     if output_bq_table != None:
         create_table(output_bq_table, dataset_n, table_n)
         write_to_bq(all_table_details)
+        
     print('Crawl completed')
 
     
