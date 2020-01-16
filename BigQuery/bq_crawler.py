@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+
+#This is post pep-8. I've choosen readability over a 19 year old standard that makes code readable on low resolution monitors
+
 import sys
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
