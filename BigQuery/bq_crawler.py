@@ -6,16 +6,19 @@ import argparse
 import csv
 from collections import OrderedDict
 import datetime as dt
+import json
 
 
 parser = argparse.ArgumentParser(description='Crawl all datasets & tables in a project and save the table details')
 parser.add_argument('--project',         type=str, help='The project that contains the BigQuery', required=True )
-parser.add_argument('--csv_path',        type=str, help='Output dir for image')
+parser.add_argument('--csv_path',        type=str, help='Output dir for CSV')
+parser.add_argument('--json_path',       type=str, help='Output dir for JSON')
 parser.add_argument('--output_bq_table', type=str, help='Table to write to in BigQuery. Ex: mydataset.mytable')
 parser.add_argument('--count_incr',      type=int, help='Log out every x tables. Choose an integer to use as a divisor', default=10)
 args = parser.parse_args()
 project = args.project
 csv_path = args.csv_path
+json_path = args.json_path
 output_bq_table = args.output_bq_table
 count_incr = args.count_incr
 
@@ -23,7 +26,7 @@ count_incr = args.count_incr
 if output_bq_table != None:
     dataset_n, table_n = output_bq_table.split('.')
 
-if csv_path == None and output_bq_table == None:
+if csv_path == None and output_bq_table == None and json_path == None:
     sys.exit('No output target, set --csv_path or --output_bq_table')
 
 
@@ -243,7 +246,20 @@ def write_to_bq(all_table_details):
     if errors == []:
         print(len(rows), 'written to', output_bq_table )
     else:
-        print(errors) 
+        print(errors)
+
+        
+def write_to_json(all_table_details):
+    """
+    Write the table details to a JSON output file
+    """
+    
+    def json_date_fixer(dic_vals):
+            if isinstance(dic_vals, dt.datetime):
+                return dic_vals.__str__()
+    
+    with open(json_path, 'w') as outfile:
+        json.dump(all_table_details, outfile, default=json_date_fixer)
     
 
 def main():
@@ -253,6 +269,8 @@ def main():
     print(result_count, ' tables found')
     if csv_path != None:
         write_to_csv(all_table_details)
+    if json_path != None:
+        write_to_json(all_table_details)
     
     if output_bq_table != None:
         create_table(output_bq_table, dataset_n, table_n)
