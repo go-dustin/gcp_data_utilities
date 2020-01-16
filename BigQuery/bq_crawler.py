@@ -33,7 +33,7 @@ if csv_path == None and output_bq_table == None and json_path == None:
 # create bigquery connection obj
 client = bigquery.Client(project=project)
 
-# BigQuery output table schema
+
 # BigQuery output table schema
 schema = [bigquery.SchemaField("log_date",              "DATETIME", mode="NULLABLE", description='Date & time of the crawl'),
           bigquery.SchemaField("project",               "STRING",   mode="NULLABLE"), 
