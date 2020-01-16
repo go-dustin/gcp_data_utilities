@@ -49,7 +49,6 @@ schema = [bigquery.SchemaField("log_date",              "DATETIME", mode="NULLAB
           bigquery.SchemaField("column_count",          "INT64",    mode="NULLABLE"),
           bigquery.SchemaField("column_names",          "STRING",   mode="REPEATED"),
           bigquery.SchemaField("partitioning_type",     "STRING",   mode="NULLABLE"),
-#           bigquery.SchemaField("range_partitioning",    "STRING",   mode="NULLABLE"),
           bigquery.SchemaField("range_part_field",      "STRING",   mode="NULLABLE"),
           bigquery.SchemaField("range_part_end",        "INT64",    mode="NULLABLE"),
           bigquery.SchemaField("range_part_interval",   "INT64",    mode="NULLABLE"),
