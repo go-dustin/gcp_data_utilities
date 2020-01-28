@@ -39,12 +39,15 @@ git clone https://github.com/go-dustin/gcp_data_utilities.git
 ### Prerequisites
 
 Python 3.5 + 
+
 pip
+
 venv, pyenv (using virtual environment isn't necessary but it's a best practice)
 
 ### Installing
 
 pip install -r requirements.txt
+
 pip3 install -r requirements.txt
 
 
