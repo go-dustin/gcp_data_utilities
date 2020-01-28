@@ -34,6 +34,7 @@ Find a table in the public data sets that meets certain criteria. So if you need
 ## Getting Started
 
 Clone this repo
+
 git clone https://github.com/go-dustin/gcp_data_utilities.git
 
 ### Prerequisites
