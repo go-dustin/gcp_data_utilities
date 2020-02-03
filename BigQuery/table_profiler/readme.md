@@ -1,23 +1,23 @@
 
 # BigQuery Table statistics profiler
 
-This script will generate an SQL Query that will create common statistics. Generates hundreds/thousands of lines of code with one very easy command.
+This script will generate an SQL Query that will create common statistics. Generates hundreds/thousands of lines of SQL code with one very easy command.
 
 **example:**
 python3 bq_table_profiler.py -p myProj -o /home/myusr/data -t medicare.medicare_comments_sim_prepped -l 2000  -r -j -D -s -c 
 
 ## Features
 
-1) Generate SQL query 
-2) Save SQL query to a .sql file
-3) Print the SQL to the terminal
-4) Run the SQL query
-  a) Display results in the terminal's stdout 
-  b) Save the results to a local JSON file
-  c) Save the results to a local CSV file
-5) Default table size limit of 1TB which can be overrode for larger tables
-6) Unpacks nested columns and flattens column name with '__' to indicate a '.' 
-7) Automatically converts integers to numeric types to avoid overflows on large sums
+1. Generate SQL query 
+2. Save SQL query to a .sql file
+3. Print the SQL to the terminal
+4. Run the SQL query
+   - Display results in the terminal's stdout 
+   - Save the results to a local JSON file
+   - Save the results to a local CSV file
+5. Default table size limit of 1TB which can be overrode for larger tables
+6. Unpacks nested columns and flattens column name with '__' to indicate a '.' 
+7. Automatically converts integers to numeric types to avoid overflows on large sums
 
 #### What the query contains:
 * Count distinct
