@@ -1,7 +1,7 @@
 
 # BigQuery Table statistics profiler
 
-This script will generate an SQL Query that will create common statistics. Generates hundreds/thousands of lines of code with one very easy command.
+This script will generate an SQL Query that will create common statistics. Generates hundreds/thousands of lines of SQL code with one very easy command.
 
 **example:**
 python3 bq_table_profiler.py -p myProj -o /home/myusr/data -t medicare.medicare_comments_sim_prepped -l 2000  -r -j -D -s -c 
