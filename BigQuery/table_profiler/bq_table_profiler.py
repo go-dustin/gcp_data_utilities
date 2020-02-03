@@ -13,14 +13,15 @@ parser = argparse.ArgumentParser(description='Table profiler with SQL genertor')
 parser.add_argument('-p', '--project',           type=str, help='The project that will execute the BigQuery job', required=True )
 parser.add_argument('-P', '--table_project',     type=str, help='The project that contains the BigQuery table')
 parser.add_argument('-t', '--dataset_tablename', type=str, help='The name of the dataset & table: dataset.tablename')
-parser.add_argument('-o', '--output_dir',        type=str, help='Output directory where you wan to save CSV & JSON data to')
-parser.add_argument('-l', '--table_size_limit',  type=int, help='Allows the script to run queries against tables that are larger than 1TB')
-parser.add_argument('-r', '--run_query',                   help='Run query and save results to a local file, requires -c CSV or -j JSON paramters',    action='store_true')
-parser.add_argument('-s', '--save_sql',                    help='Save the profiling SQL to a local SQL file',     action='store_true')
-parser.add_argument('-c', '--save_csv',                    help='Save the profiling CSV to a local SQL file',     action='store_true')
-parser.add_argument('-j', '--save_json',                   help='Save the profiling JSON to a local SQL file',    action='store_true')
-parser.add_argument('-d', '--show_sql',                    help='Print the SQL query to the terminal',            action='store_true')
-parser.add_argument('-D', '--show_profile',                help='Print the query results to the terminal',        action='store_true')
+parser.add_argument('-o', '--output_dir',        type=str, help='Output directory where you wan to save CSV & JSON data to', default='./')
+parser.add_argument('-l', '--table_size_limit',  type=int, help='Allows the script to run queries against tables that are larger than 1TB', default=1000)
+parser.add_argument('-r', '--run_query',                   help='Run query and save results to a local file, requires -c CSV or -j JSON paramters', action='store_true')
+parser.add_argument('-s', '--save_sql',                    help='Save the profiling SQL to a local SQL file',     action='store_true', default=False)
+parser.add_argument('-c', '--save_csv',                    help='Save the profiling CSV to a local SQL file',     action='store_true', default=False)
+parser.add_argument('-j', '--save_json',                   help='Save the profiling JSON to a local SQL file',    action='store_true', default=False)
+parser.add_argument('-d', '--show_sql',                    help='Print the SQL query to the terminal',            action='store_true', default=False)
+parser.add_argument('-D', '--show_profile',                help='Print the query results to the terminal',        action='store_true', default=False)
+parser.add_argument('-S', '--sample_data',       type=int, help='Grabs a percentage of the data for faster processing, does not reduce data queried', choices=range(1, 99))
 
 args = parser.parse_args()
 project           = args.project
@@ -34,6 +35,7 @@ save_csv          = args.save_csv
 save_json         = args.save_json
 show_sql          = args.show_sql
 show_profile      = args.show_profile
+sample_data       = args.sample_data
 
 
 ### Get table metadata
@@ -267,11 +269,11 @@ def sql_gen(sql_cols_dic, unnest_cols):
 
     # fill the skelton in with the select & unnest statements
     query_skelton = """
-    # Created by BigQuery Table Profiler: https://github.com/go-dustin/gcp_data_utilities
-    # Empty & Null profile returns Infinity if a divide by zero occurs
-    SELECT 
-    {select_statement}
-    FROM   {full_table_name}"""
+# Created by BigQuery Table Profiler: https://github.com/go-dustin/gcp_data_utilities
+# Empty & Null profile returns Infinity if a divide by zero occurs
+SELECT 
+{select_statement}
+FROM   {full_table_name}"""
 
     # create the unnest statement 
     nested_statement = ',\n'
@@ -286,7 +288,16 @@ def sql_gen(sql_cols_dic, unnest_cols):
     select_statement = '\n'.join(select_statement_formated)
     # fill in the select statements & the table name
     query = query_skelton.replace('{select_statement}', select_statement).replace('{full_table_name}', full_table_name)
+    
+    if sample_data != None:
+        if sample_data > 0:
+            sample_statement = '\nWHERE   RAND() < {sample_data} / (SELECT COUNT(*) FROM {full_table_name})'
+            sample_statement = sample_statement.replace('{sample_data}', str(sample_data)).replace('{full_table_name}', full_table_name)
+            query = query + sample_statement
+        elif sample_data <= 0:
+            print('Sample data is to small')
 
+        
     return query
 
 ### End SQL geneerator 
@@ -346,7 +357,7 @@ def write_sql(output_dir, query):
 def main():
     
     global project, table_project, dataset_tablename, output_dir, table_size_limit, run_query
-    global save_sql, save_csv, save_json, show_sql, show_profile
+    global save_sql, save_csv, save_json, show_sql, show_profile, sample_data
 
     if table_project == None:
         table_project = project
@@ -364,8 +375,9 @@ def main():
     if show_sql == True:
         print('Display query', query)
 
+        
     # run query 
-    if total_gigabytes <= table_size_limit and run_query == True and save_csv == True or save_json == True or show_profile == True:
+    if total_gigabytes <= table_size_limit and run_query == True and True in [save_csv, save_json, show_profile]:
         table_profile = run_profiler(query)
         # Replace objects tht can't be serialized to json
         for k, v in table_profile.items():
