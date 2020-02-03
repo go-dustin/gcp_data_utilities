@@ -18,6 +18,7 @@ python3 bq_table_profiler.py -p myProj -o /home/myusr/data -t medicare.medicare_
 5. Default table size limit of 1TB which can be overrode for larger tables
 6. Unpacks nested columns and flattens column name with '__' to indicate a '.' 
 7. Automatically converts integers to numeric types to avoid overflows on large sums
+8. Data sampling to reduce the time it takes to profile very large tables
 
 #### What the query contains:
 * Count distinct
