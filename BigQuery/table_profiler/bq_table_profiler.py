@@ -1,408 +1,316 @@
-#!/usr/bin/env python
-# coding: utf-8
-
+import sys
 from google.cloud import bigquery
-import json
-import csv
+from google.cloud.exceptions import NotFound
+from collections import Counter
 import argparse
-import datetime
-from pprint import pprint as prt
+import csv
+from collections import OrderedDict
+import datetime as dt
+import json
 
-
-parser = argparse.ArgumentParser(description='Table profiler with SQL genertor')
-parser.add_argument('-p', '--project',           type=str, help='The project that will execute the BigQuery job', required=True )
-parser.add_argument('-P', '--table_project',     type=str, help='The project that contains the BigQuery table')
-parser.add_argument('-t', '--dataset_tablename', type=str, help='The name of the dataset & table: dataset.tablename')
-parser.add_argument('-o', '--output_dir',        type=str, help='Output directory where you wan to save CSV & JSON data to', default='./')
-parser.add_argument('-l', '--table_size_limit',  type=int, help='Allows the script to run queries against tables that are larger than 1TB', default=1000)
-parser.add_argument('-r', '--run_query',                   help='Run query and save results to a local file, requires -c CSV or -j JSON paramters', action='store_true')
-parser.add_argument('-s', '--save_sql',                    help='Save the profiling SQL to a local SQL file',     action='store_true', default=False)
-parser.add_argument('-c', '--save_csv',                    help='Save the profiling CSV to a local SQL file',     action='store_true', default=False)
-parser.add_argument('-j', '--save_json',                   help='Save the profiling JSON to a local SQL file',    action='store_true', default=False)
-parser.add_argument('-d', '--show_sql',                    help='Print the SQL query to the terminal',            action='store_true', default=False)
-parser.add_argument('-D', '--show_profile',                help='Print the query results to the terminal',        action='store_true', default=False)
-parser.add_argument('-S', '--sample_data',       type=int, help='Grabs a percentage of the data for faster processing, does not reduce data queried', choices=range(1, 99))
-
+# CLI argument parser
+parser = argparse.ArgumentParser(description='Crawl all datasets & tables in a project and save the table details')
+parser.add_argument('--project',         type=str, help='The project that contains the BigQuery', required=True )
+parser.add_argument('--csv_path',        type=str, help='Output dir for CSV')
+parser.add_argument('--json_path',       type=str, help='Output dir for JSON')
+parser.add_argument('--output_bq_table', type=str, help='Table to write to in BigQuery. Ex: mydataset.mytable')
+parser.add_argument('--count_incr',      type=int, help='Log out every x tables. Choose an integer to use as a divisor', default=10)
 args = parser.parse_args()
-project           = args.project
-table_project     = args.table_project
-dataset_tablename = args.dataset_tablename
-output_dir        = args.output_dir
-table_size_limit  = args.table_size_limit
-run_query         = args.run_query
-save_sql          = args.save_sql
-save_csv          = args.save_csv
-save_json         = args.save_json
-show_sql          = args.show_sql
-show_profile      = args.show_profile
-sample_data       = args.sample_data
+project         = args.project
+csv_path        = args.csv_path
+json_path       = args.json_path
+output_bq_table = args.output_bq_table
+count_incr      = args.count_incr
 
 
-### Get table metadata
-def get_schema(table_project, dataset_tablename):
+# BigQuery output
+if output_bq_table != None:
+    des_proj, dataset_n, table_n = output_bq_table.split('.')
 
-    client = bigquery.Client(project=table_project)
-    table = client.get_table(dataset_tablename)
-    table_schema = table.schema
+# CSV ouput
+if csv_path == None and output_bq_table == None and json_path == None:
+    sys.exit('No output target, set --csv_path or --output_bq_table')
 
-    fields_ls = []
-    unnest_cols = []
-    for field in table_schema:
-        path = field.name
-        if len(field.fields) > 0:
-            for i in field.fields:
-                path2 = path + '__' + i.name
-                unnest_cols.append(path)
-                if len(i.fields) > 1:
-                    for a in i.fields:
-                        path3 = path2 + '__' + a.name
-                        unnest_cols.append(i.name)
-                        if len(a.fields) > 1:
-                            for b in a.fields:
-                                path4 = path3 + '__' + b.name
-                                unnest_cols.append((a.name))
-                                rec = {'name': path4, 'col_name': b.name, 'mode': b.mode, 'field_type' : b.field_type, 'path':  a.name}
-                                fields_ls.append(rec)
-                        else:
-                            rec = {'name': path3, 'col_name': a.name, 'mode': a.mode, 'field_type' : a.field_type, 'path':  i.name }
-                            fields_ls.append(rec)
-                else:
-                    rec = {'name': path2, 'col_name': i.name, 'mode': i.mode, 'field_type' : i.field_type, 'path':  field.name }
-                    fields_ls.append(rec)
+
+# create bigquery connection obj
+client = bigquery.Client(project=project)
+
+
+# Schema for BigQuery output table
+schema = [bigquery.SchemaField("log_date",              "DATETIME", mode="NULLABLE", description='Date & time of the crawl'),
+          bigquery.SchemaField("project",               "STRING",   mode="NULLABLE"), 
+          bigquery.SchemaField("dataset",               "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("table_path",            "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("full_table_id",         "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("table_name",            "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("friendly_name",         "STRING",   mode="NULLABLE"), #this is legacy, might not be relevant anymore
+          bigquery.SchemaField("table_type",            "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("created",               "DATETIME", mode="NULLABLE"),
+          bigquery.SchemaField("modified",              "DATETIME", mode="NULLABLE"),
+          bigquery.SchemaField("expires",               "DATETIME", mode="NULLABLE"),
+          bigquery.SchemaField("location",              "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("description",           "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("labels",                "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("column_count",          "INT64",    mode="NULLABLE"),
+          bigquery.SchemaField("column_names",          "STRING",   mode="REPEATED"),
+          bigquery.SchemaField("partitioning_type",     "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("range_part_field",      "STRING",   mode="NULLABLE", description='Integer partition field'),
+          bigquery.SchemaField("range_part_end",        "INT64",    mode="NULLABLE", description='Integer partition end point'),
+          bigquery.SchemaField("range_part_interval",   "INT64",    mode="NULLABLE", description='Integer partition increment interval'),
+          bigquery.SchemaField("range_part_start",      "INT64",    mode="NULLABLE", description='Integer partition start point'),
+          bigquery.SchemaField("time_partition_field",  "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("time_partition_type",   "STRING",   mode="NULLABLE"),
+          bigquery.SchemaField("clustering_fields",     "STRING",   mode="REPEATED"),
+          bigquery.SchemaField("size_mb",               "INT64",    mode="NULLABLE"),
+          bigquery.SchemaField("num_rows",              "INT64",    mode="NULLABLE"),
+          bigquery.SchemaField("avg_byte_per_row",      "NUMERIC",  mode="NULLABLE"),
+          bigquery.SchemaField("avg_kbyte_per_row",     "NUMERIC",  mode="NULLABLE"),
+          bigquery.SchemaField("float",                 "INT64",    mode="NULLABLE", description='Number of FLOAT columns in the table'),
+          bigquery.SchemaField("datetime",              "INT64",    mode="NULLABLE", description='Number of DATETIME columns in the table'),
+          bigquery.SchemaField("date",                  "INT64",    mode="NULLABLE", description='Number of DATE columns in the table'),
+          bigquery.SchemaField("repeated",              "INT64",    mode="NULLABLE", description='Number of REPEATED columns in the table'),
+          bigquery.SchemaField("record",                "INT64",    mode="NULLABLE", description='Number of RECORD columns in the table'),
+          bigquery.SchemaField("timestamp",             "INT64",    mode="NULLABLE", description='Number of TIMESTAMP columns in the table'),
+          bigquery.SchemaField("time",                  "INT64",    mode="NULLABLE", description='Number of TIME columns in the table'),
+          bigquery.SchemaField("numeric",               "INT64",    mode="NULLABLE", description='Number of NUMERIC columns in the table'),
+          bigquery.SchemaField("bytes",                 "INT64",    mode="NULLABLE", description='Number of BYTES columns in the table'),
+          bigquery.SchemaField("struct",                "INT64",    mode="NULLABLE", description='Number of STRUCT columns in the table'),
+          bigquery.SchemaField("boolean",               "INT64",    mode="NULLABLE", description='Number of BOOLEAN columns in the table'),
+          bigquery.SchemaField("integer",               "INT64",    mode="NULLABLE", description='Number of INTEGER columns in the table'),
+          bigquery.SchemaField("geography",             "INT64",    mode="NULLABLE", description='Number of GEOGRAPHY columns in the table'),
+          bigquery.SchemaField("string",                "INT64",    mode="NULLABLE", description='Number of STRING columns in the table'),
+          ]
+
+
+def crawler(project):
+    """
+    Crawl all of the datasets and tables in the project
+    """
+    # Set the project that will be crawled
+    client.list_datasets(project=project)
+    datasets = list(client.list_datasets())
+    all_tables = []
+    counter = 0
+    
+    # generate a list of all the tables in the project
+    for dataset in datasets:
+        dataset_nm = dataset.dataset_id
+        tables_list = list(client.list_tables(dataset_nm)) # API call
+        for table in tables_list:
+            dataset_table_name = dataset_nm + '.' + table.table_id
+            all_tables.append(dataset_table_name)
+            counter += 1
+            if counter % count_incr == 0:
+                print(counter, 'tables crawled')
+    
+    # Prints final count
+    print(counter, 'tables crawled')
+
+    all_table_details = []
+    for table in all_tables:
+        # Extract the table metadata 
+        table_details = get_table_details(table)
+        all_table_details.append(table_details)
+
+    return all_table_details
+
+
+def get_table_details(dataset_tablename):
+    """
+    Extract table details
+    """
+    
+    dataset = dataset_tablename.split('.')[0]
+    table_doc = OrderedDict() 
+    table_doc['log_date']    = dt.datetime.now()
+    table_doc['dataset']     = dataset
+    table_doc['table_name']  = dataset_tablename
+    
+    try:
+        table = client.get_table(dataset_tablename) # API call
+        table_schema = table.schema
+        type_list = []
+        column_list = []
+        for i in table_schema:
+            if i.mode == 'REPEATED':
+                name = i.name
+                for j in i.fields:
+                    new_name = name + '.' + j.name
+                    column_list.append(new_name)
+                    type_list.append(j.field_type)
+            else:
+                column_list.append(i.name)
+                type_list.append(i.field_type)
+
+        column_list.sort()
+        schema_types_count = dict(Counter(type_list))
+            #lower case to match column naming convention 
+        schema_types_count = {key.lower() if type(key) == str else key: value for key, value in schema_types_count.items()} 
+
+        # Create an ordered dict to ensure column positions don't change & add metadata   
+        table_doc['project']           = table.project
+        table_doc['table_path']        = table.path
+        table_doc['full_table_id']     = table.full_table_id
+        table_doc['friendly_name']     = table.friendly_name
+        table_doc['table_type']        = table.table_type
+        table_doc['created']           = table.created
+        table_doc['modified']          = table.modified
+        table_doc['expires']           = table.expires
+        table_doc['location']          = table.location
+        table_doc['description']       = table.description
+        table_doc['labels']            = str(table.labels) # convert this to tuples in an array?
+        table_doc['column_count']      = len(column_list)
+        table_doc['column_names']      = column_list
+        table_doc['partitioning_type'] = table.partitioning_type
+
+        # Check if integer partitioning exits if not null the value
+        if table.range_partitioning != None:
+            table_doc['range_part_field']    = table.range_partitioning.field
+            table_doc['range_part_end']      = table.range_partitioning.range_.end
+            table_doc['range_part_interval'] = table.range_partitioning.range_.interval
+            table_doc['range_part_start']    = table.range_partitioning.range_.start
         else:
-            rec = {'name': path, 'col_name': field.name, 'mode': field.mode, 'field_type' : field.field_type, 'path':  None }
-            fields_ls.append(rec)
+            table_doc['range_part_field']    = None
+            table_doc['range_part_end']      = None
+            table_doc['range_part_interval'] = None
+            table_doc['range_part_start']    = None
 
-    # nested columns need to be in order to unnest properly
-    seen = set()
-    unnest_cols = [x for x in unnest_cols if (x not in seen) and (not seen.add(x))]
-    
-    return fields_ls, unnest_cols
-
-
-def sql_cols(fields_ls):
-
-    table_schema = { 'STRING'   : [],
-                     'NUMBERS'  : [],
-                     'TIME'     : [],
-                     'BOOLEAN'  : [],
-                     'REPEATED' : [],
-                     'STRUCT'   : []}
-
-    for sf in fields_ls:
-        if sf['mode'] == 'REPEATED':
-            table_schema['REPEATED'].append((sf['col_name'], sf['name'], sf['mode']))
-        elif sf['field_type'] == 'NUMERIC' or sf['field_type'] == 'FLOAT' or sf['field_type'] == 'INTEGER':
-            table_schema['NUMBERS'].append((sf['col_name'], sf['name'], sf['mode']))
-        elif sf['field_type'] == 'DATE' or sf['field_type'] == 'DATETIME' or sf['field_type'] == 'DATETIME' or sf['field_type'] == 'TIMESTAMP':
-            table_schema['TIME'].append((sf['col_name'], sf['name'], sf['mode']))
-        elif sf['field_type'] == 'BYTES':
-            pass
+        # Check if time partitioning exits if not null the value
+        if table.time_partitioning != None:
+            table_doc['time_partition_field'] = table.time_partitioning.field
+            table_doc['time_partition_type']  = table.time_partitioning.type_
         else:
-            table_schema[sf['field_type']].append((sf['col_name'], sf['name'], sf['mode']))
+            table_doc['time_partition_field'] = None
+            table_doc['time_partition_type']  = None
 
-    return table_schema
-
-
-### SQL Generator
-def empty_null_counter(comment, column_name):
-    
-    query_snipit = """{spacer}{comment}
-        ROUND(
-              IEEE_DIVIDE( SUM(CASE
-                                    WHEN `{column_name}` IS NULL THEN 1
-                                    WHEN  CAST(`{column_name}` AS STRING) = "" THEN 1
-                                    ELSE 0
-                               END),
-                           count(`{column_name}`) 
-                         ), 1
-              ){spacer}  AS {alias_name}_null_empty_perct,"""
-
-    return query_snipit.replace('{column_name}', column_name).replace('{comment}', comment)
-
-
-def string_profiler(column_name, alias_name, field_mode):
-    
-    comment = "# ▼ Column: {column_name}, Type: String ▼"
-    query_snipit = """        COUNT(DISTINCT `{column_name}`) {spacer} AS {alias_name}_count_distinct,
-        COUNT(`{column_name}`) {spacer} AS {alias_name}_count,
-        MIN(LENGTH(`{column_name}`)) {spacer} AS {alias_name}_char_length_min,
-        CAST(ROUND(AVG(LENGTH(`{column_name}`)), 0)AS INT64) {spacer} AS {alias_name}_char_length_avg,
-        MAX(LENGTH(`{column_name}`)) {spacer} AS {alias_name}_char_length_max,
-        SUM(LENGTH(`{column_name}`)) {spacer} AS {alias_name}_char_total_count,
-        APPROX_QUANTILES(CHAR_LENGTH(`{column_name}`), 10) {spacer} AS {alias_name}_quantiles,
-        # ▲ """
-    
-    if field_mode == 'NULLABLE':
-        query_snipit = empty_null_counter(comment, column_name) + '\n' + query_snipit
-        
-    return query_snipit.replace('{column_name}', column_name).replace('{alias_name}', alias_name)
-
-
-def numbers_profiler(column_name, alias_name, field_mode):
-    
-    #NUMERIC handles INT64 overflow
-    comment = "# ▼ Column: {column_name}, Type: Numeric ▼"
-    query_snipit = """        COUNT(`{column_name}`) {spacer} AS {alias_name}_count,
-        COUNT(DISTINCT `{column_name}`) {spacer} AS {alias_name}_count_distinct,
-        MIN(`{column_name}`) {spacer} AS {alias_name}_min,
-        AVG(`{column_name}`) {spacer} AS {alias_name}_avg,
-        MAX(`{column_name}`) {spacer} AS {alias_name}_max,
-        SUM( CAST(`{column_name}` AS NUMERIC) ) {spacer} AS {alias_name}_sum,
-        APPROX_QUANTILES(`{column_name}`, 10) {spacer} AS {alias_name}_approx_quantiles,
-        # ▲ """
-    
-    if field_mode == 'NULLABLE':
-        query_snipit = empty_null_counter(comment, column_name) + '\n' + query_snipit
-        
-    return query_snipit.replace('{column_name}', column_name).replace('{alias_name}', alias_name)
-
-
-def time_profiler(column_name, alias_name, field_mode):
-    
-    comment = "# ▼ Column: {column_name}, Type: Time ▼"
-    query_snipit = """        COUNT(`{column_name}`) {spacer} AS {alias_name}_count,
-        COUNT(DISTINCT `{column_name}`) {spacer} AS {alias_name}_count_distinct,
-        MIN(`{column_name}`) {spacer} AS {alias_name}_min,
-        MAX(`{column_name}`) {spacer} AS {alias_name}_max,
-        DATE_DIFF(MAX(CAST(`{column_name}` AS DATE)), MIN(CAST(`{column_name}` AS DATE)),  DAY) {spacer} AS {alias_name}_day_count,
-        DATE_DIFF(MAX(CAST(`{column_name}` AS DATE)), MIN(CAST(`{column_name}` AS DATE)),  YEAR) {spacer} AS {alias_name}_year_count,
-        DATE_DIFF(MAX(CAST(`{column_name}` AS DATE)), MIN(CAST(`{column_name}` AS DATE)),  MONTH) {spacer} AS {alias_name}_month_count,
-        # ▲ """
-    
-    if field_mode == 'NULLABLE':
-        query_snipit = empty_null_counter(comment, column_name) + '\n' + query_snipit
-        
-    return query_snipit.replace('{column_name}', column_name).replace('{alias_name}', alias_name)
-
-
-def boolean_profiler(column_name, alias_name, field_mode):
-    
-    comment = "# ▼ Column: {column_name}, Type: Boolean ▼"
-    query_snipit = """        COUNT(received_timestamp) {spacer} AS {alias_name}_count,
-        SUM(CASE 
-                WHEN als_unit = True THEN 1
-                ELSE 0
-            END) {spacer} AS {alias_name}_true,
-        SUM(CASE 
-                WHEN als_unit = False THEN 1
-                ELSE 0
-            END) {spacer} AS {alias_name}_false,"""
-    
-    if field_mode == 'NULLABLE':
-        query_snipit = empty_null_counter(comment, column_name) + '\n' + query_snipit
-        
-    return query_snipit.replace('{column_name}', column_name).replace('{alias_name}', alias_name)
-
-
-def array_struct_profiler(column_name, alias_name, field_mode):
-    
-    comment = "# ▼ Column: {column_name}, Type:  ▼"
-    query_snipit = """MIN(ARRAY_LENGTH(`{column_name}`)) {spacer} AS {alias_name}_min_array_len,
-        CAST(AVG(ARRAY_LENGTH(`{column_name}`)) AS INT64) {spacer} AS {alias_name}_avg_array_len,
-        MAX(ARRAY_LENGTH(`{column_name}`)) {spacer} AS {alias_name}_max_array_len,
-        # ▲ """
-    
-    if field_mode == 'NULLABLE':
-        query_snipit = empty_null_counter(comment, column_name) + '\n' + query_snipit
-        
-    return query_snipit.replace('{column_name}', column_name).replace('{alias_name}', alias_name)
-
-
-def sql_gen(sql_cols_dic, unnest_cols):
-
-    select_statement_ls = []
-
-    for column_type, column_names in sql_cols_dic.items():
-        if len(column_names) > 0:
-            for column_name, alias_name, field_mode in column_names:
-                if column_type == 'STRING':
-                    string_statement = string_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                elif column_type == 'NUMBERS':
-                    string_statement = numbers_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                elif column_type == 'TIME':
-                    string_statement = time_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                elif column_type == 'BOOLEAN':
-                    string_statement = boolean_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                elif  column_type == 'REPEATED':
-                    string_statement = array_struct_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                elif column_type == 'STRUCT':
-                    string_statement = array_struct_profiler(column_name, alias_name, field_mode)
-                    select_statement_ls.append(string_statement)
-                else:
-                    print('Miss:\t', column_name)
-
-
-    full_table_name = "`{table_project}.{dataset_table}`".replace('{table_project}', table_project).replace('{dataset_table}', dataset_tablename)
-    char_length = 0
-
-    # Finds the longest statement and sets the spacers char width
-    select_statement_unformatted = '\n'.join(select_statement_ls)
-    for i in select_statement_unformatted.split('\n'):
-        if 'AS ' in i or '#' in i:
-            statement = i.split(' {spacer} ')[0].rstrip()
-            statement_len = len(statement)
-            if statement_len > char_length:
-                char_length = statement_len
-
-    char_length = char_length + 2 # add padding for longest line
-    # resizes the spacer so the aliases line up on the right side
-    select_statement_formated = []
-    for i in select_statement_unformatted.split('\n'):
-        if 'AS ' in i:
-            statement = i.split('{spacer}')[0].rstrip()
-            statement_len = len(statement)
-            spacer = ' ' * (char_length - statement_len)
-            new_statement = i.replace('{spacer}', spacer)
-            select_statement_formated.append(new_statement)
-        elif '{comment}' in i or '{spacer}# ▼' in i:
-            spacer = ' ' * (char_length + 2)
-            new_statement = i.replace('{spacer}', spacer)#.replace('\r', '\n')
-            select_statement_formated.append(new_statement)
+        # Check if there are clustered fields exits if not null the value
+        if table.clustering_fields != None:
+            table_doc['clustering_fields'] = table.clustering_fields
         else:
-            select_statement_formated.append(i)
+            table_doc['clustering_fields']    = []
 
-    # fill the skelton in with the select & unnest statements
-    query_skelton = """
-# Created by BigQuery Table Profiler: https://github.com/go-dustin/gcp_data_utilities
-# Empty & Null profile returns Infinity if a divide by zero occurs
-SELECT 
-{select_statement}
-FROM   {full_table_name}"""
+        table_doc['size_mb']  = int(table.num_bytes / 1000000)
+        table_doc['num_rows'] = table.num_rows
+        try:
+            table_doc['avg_byte_per_row']  = round(table.num_bytes / table.num_rows, 2)
+            table_doc['avg_kbyte_per_row'] = round(int(table.num_bytes / 1000) / table.num_rows, 2)
+        except:
+            table_doc['avg_byte_per_row']  = None
+            table_doc['avg_kbyte_per_row'] = None
 
-    # create the unnest statement 
-    nested_statement = ',\n'
-    for nested in unnest_cols:
-        nested_statement = nested_statement + '        UNNEST({}),\n'.format(nested)
-    # remove the trailing chars that will causes an error
-    if nested_statement[-2:] == ',\n':
-        nested_statement = nested_statement[:-2]
-    # add the unnest statement below the FROM statement
-    query_skelton = query_skelton + nested_statement
-    # convert the list of select statements to a string
-    select_statement = '\n'.join(select_statement_formated)
-    # fill in the select statements & the table name
-    query = query_skelton.replace('{select_statement}', select_statement).replace('{full_table_name}', full_table_name)
-    
-    if sample_data != None:
-        if sample_data > 0:
-            sample_statement = '\nWHERE   RAND() < {sample_data} / (SELECT COUNT(*) FROM {full_table_name})'
-            sample_statement = sample_statement.replace('{sample_data}', str(sample_data)).replace('{full_table_name}', full_table_name)
-            query = query + sample_statement
-        elif sample_data <= 0:
-            print('Sample data is to small')
+        table_doc['float']     = None
+        table_doc['datetime']  = None
+        table_doc['date']      = None
+        table_doc['repeated']  = None
+        table_doc['record']    = None
+        table_doc['timestamp'] = None
+        table_doc['time']      = None
+        table_doc['numeric']   = None
+        table_doc['bytes']     = None
+        table_doc['struct']    = None
+        table_doc['boolean']   = None
+        table_doc['integer']   = None
+        table_doc['geography'] = None
+        table_doc['string']    = None
+
+        table_doc.update(schema_types_count)
+    except:
+        schema_cols = [ 'project','table_path','full_table_id','friendly_name','table_type',
+                        'created','modified','expires','location','description','labels','column_count','column_names',
+                        'partitioning_type','range_part_field','range_part_end','range_part_interval','range_part_start',
+                        'time_partition_field','time_partition_type','size_mb','num_rows','avg_byte_per_row','avg_kbyte_per_row',
+                        'float','datetime','date','repeated','record','timestamp','time','numeric','bytes','struct','boolean',
+                        'integer','geography','string']
+
+        for i in schema_cols:
+            table_doc[i] = None
+
+    return table_doc
+
+
+def write_to_csv(all_table_details):
+    """
+    Write the table details to a local csv
+    """
+
+    keys = all_table_details[0].keys()
+    with open(csv_path, 'w') as output_file:
+        dict_writer = csv.DictWriter(output_file, keys)
+        dict_writer.writeheader()
+        dict_writer.writerows(all_table_details)
+    print('CSV saved to:', csv_path)
+
+# --- write to BQ
+def create_table(output_bq_table, dataset_n, table_n):
+    """
+    Checks if the output table exists and creates it if needed
+    """
+    dataset = client.dataset(dataset_n)
+    table_ref = dataset.table(table_n)
+
+    print('checking if output table exists')
+    try:
+        client.get_table(table_ref)
+        table_exists = True
+    except NotFound:
+        table_exists = False
+
+    if table_exists == False:
+        full_table_name = output_bq_table
+        table = bigquery.Table(full_table_name, schema=schema)
+        client.create_table(table)
+        print("Created table ", output_bq_table)
+        
+
+def write_to_bq(all_table_details):
+    """
+    Write the table details to the BigQuery output table
+    """
+
+    rows = [tuple(row.values()) for row in all_table_details]
+
+    print('num of rows to write',len(rows))
+    errors = client.insert_rows(output_bq_table, rows, selected_fields=schema)
+    if errors == []:
+        print(len(rows), 'written to', output_bq_table )
+    else:
+        print(errors)
 
         
-    return query
+def write_to_json(all_table_details):
+    """
+    Write the table details to a JSON output file
+    """
 
-### End SQL geneerator 
+    def json_date_fixer(dic_vals):
+            if isinstance(dic_vals, dt.datetime):
+                return dic_vals.__str__()
 
-
-def get_estimate(project, query):
-
-    client = bigquery.Client(project=project)
-    job_config = bigquery.QueryJobConfig(dry_run=True)
-    query_job = client.query((query),job_config=job_config,)
-    total_bytes = query_job.total_bytes_processed 
-    total_megabytes = int(total_bytes / 1048576)
-    total_gigabytes = round(total_bytes / 1073741824, 2)
+    with open(json_path, 'w') as outfile:
+        json.dump(all_table_details, outfile, default=json_date_fixer)
     
-    return total_bytes, total_megabytes, total_gigabytes
-
-
-def run_profiler(query):
-    
-    client = bigquery.Client(project=project)
-    job_config = bigquery.QueryJobConfig(use_query_cache=False)
-    query_job = client.query((query),job_config=job_config,)
-    table_profile = dict(list(query_job.result())[0])
-    
-    return table_profile 
-
-
-
-def write_json(output_dir, table_profile):
-    
-    def datetime_handler(x):
-        
-        if isinstance(x, datetime.datetime):
-            return x.isoformat()
-        raise TypeError("Unknown type")
-    
-    json_path_filename = output_dir + '/' + 'profile_' + dataset_tablename.replace('.', '_') + '.json'
-    with open(json_path_filename, 'w') as f:
-        json.dump(table_profile, f, indent=4, default=datetime_handler)
-        
-
-def write_csv(output_dir, table_profile):
-    csv_path_filename = output_dir + '/' + 'profile_' + dataset_tablename.replace('.', '_') + '.csv'
-    with open(csv_path_filename, 'w', newline='') as csvfile:
-        fieldnames = list(table_profile.keys())
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow(table_profile)
-    
-
-def write_sql(output_dir, query):
-    sql_path_filename = output_dir + '/' + 'profile_' + dataset_tablename.replace('.', '_') + '.sql'
-    with open(sql_path_filename, "w") as f:
-        f.write(query)
-
 
 def main():
+
+    print('Starting crawl')
+
+    all_table_details = crawler(project)
+    result_count = len(all_table_details)
+
+    print(result_count, ' tables found')
+
+    if csv_path != None:
+        write_to_csv(all_table_details)
+
+    if json_path != None:
+        write_to_json(all_table_details)
+
+    if output_bq_table != None:
+        create_table(output_bq_table, dataset_n, table_n)
+        write_to_bq(all_table_details)
+
+    print('Crawl completed')
+
     
-    global project, table_project, dataset_tablename, output_dir, table_size_limit, run_query
-    global save_sql, save_csv, save_json, show_sql, show_profile, sample_data
-
-    if table_project == None:
-        table_project = project
-
-    # Generate query  &  dry run check
-    fields_ls, unnest_cols = get_schema(table_project, dataset_tablename)
-    sql_cols_dic = sql_cols(fields_ls)
-    query = sql_gen(sql_cols_dic, unnest_cols)
-    total_bytes, total_megabytes, total_gigabytes = get_estimate(project, query)
-    print('KB: {}\nMB: {}\nGB: {}'.format(total_bytes, total_megabytes, total_gigabytes))
-
-    if save_sql == True:
-        write_sql(output_dir, query)
-
-    if show_sql == True:
-        print('Display query', query)
-
-        
-    # run query 
-    if total_gigabytes <= table_size_limit and run_query == True and True in [save_csv, save_json, show_profile]:
-        table_profile = run_profiler(query)
-        # Replace objects tht can't be serialized to json
-        for k, v in table_profile.items():
-            if 'sum' in k:
-                table_profile[k] = int(v.to_eng_string())
-            elif v == float('inf'):
-                table_profile[k] = None
-            elif isinstance(v, datetime.datetime) == True:
-                table_profile[k] = v.isoformat()
-        
-        if save_csv == True:
-            write_csv(output_dir, table_profile)
-        
-        if save_json == True:
-            write_json(output_dir, table_profile)
-                
-        if show_profile == True:
-            prt(table_profile)
-    else:
-        print('Query did not run')
-
-        
-
-
 if __name__ == '__main__':
     main()
-
-
