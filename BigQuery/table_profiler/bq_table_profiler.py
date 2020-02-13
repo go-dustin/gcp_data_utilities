@@ -131,8 +131,10 @@ def get_table_details(dataset_tablename):
         table_schema = table.schema
         type_list = []
         column_list = []
+
+        # Unpack the schema, extracting the table name & column type
         for i in table_schema:
-            if i.mode == 'REPEATED':
+            if i.mode == 'REPEATED': # 1 level of recursion more can be added
                 name = i.name
                 for j in i.fields:
                     new_name = name + '.' + j.name
@@ -144,7 +146,7 @@ def get_table_details(dataset_tablename):
 
         column_list.sort()
         schema_types_count = dict(Counter(type_list))
-            #lower case to match column naming convention 
+        #lower case to match column naming convention 
         schema_types_count = {key.lower() if type(key) == str else key: value for key, value in schema_types_count.items()} 
 
         # Create an ordered dict to ensure column positions don't change & add metadata   
@@ -216,11 +218,13 @@ def get_table_details(dataset_tablename):
         table_doc.update(schema_types_count)
     except:
         schema_cols = [ 'project','table_path','full_table_id','friendly_name','table_type',
-                        'created','modified','expires','location','description','labels','column_count','column_names',
-                        'partitioning_type','range_part_field','range_part_end','range_part_interval','range_part_start',
-                        'time_partition_field','time_partition_type','size_mb','num_rows','avg_byte_per_row','avg_kbyte_per_row',
-                        'float','datetime','date','repeated','record','timestamp','time','numeric','bytes','struct','boolean',
-                        'integer','geography','string']
+                        'created','modified','expires','location','description','labels',
+                        'column_count','column_names','partitioning_type','range_part_field',
+                        'range_part_end','range_part_interval','range_part_start',
+                        'time_partition_field','time_partition_type','size_mb','num_rows',
+                        'avg_byte_per_row','avg_kbyte_per_row','float','datetime','date',
+                        'repeated','record','timestamp','time','numeric','bytes','struct',
+                        'boolean','integer','geography','string']
 
         for i in schema_cols:
             table_doc[i] = None
