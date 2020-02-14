@@ -33,6 +33,12 @@ Data science & analyst data profiling for discovery
 
 Track table changes over time
 
+## Caution
+
+When querying very large tables with a lot of columns, you should use the sampling parameter or the job may timeout.
+
+This script can generate SQL queries that will exceed the character length allowable by BigQuery. This may not be useful for tables that have a very large number of columns
+
 ## Getting Started
 
 Clone this repo  
